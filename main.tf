@@ -1,99 +1,78 @@
-variable "agent_id" {
-  description = "The ID of the Coder agent to install Ray on"
-  type        = string
-}
-
-variable "slug" {
-  description = "The slug for the Ray Dashboard app"
-  type        = string
-  default     = "ray-dashboard"
-}
-
-variable "display_name" {
-  description = "The display name for the Ray Dashboard app"
-  type        = string
-  default     = "Ray Dashboard"
-}
-
-variable "icon" {
-  description = "The icon URL for the Ray Dashboard app"
-  type        = string
-  default     = "https://raw.githubusercontent.com/ray-project/ray/master/doc/source/images/ray_logo.png"
-}
-
-variable "port" {
-  description = "The port number for the Ray Dashboard"
-  type        = number
-  default     = 8265
-}
-
-variable "subdomain" {
-  description = "Whether to use a subdomain for the Ray Dashboard"
-  type        = bool
-  default     = true
-}
-
-variable "share" {
-  description = "The sharing level for the Ray Dashboard app"
-  type        = string
-  default     = "owner"
-  validation {
-    condition     = contains(["owner", "authenticated", "public"], var.share)
-    error_message = "Share must be one of: owner, authenticated, public."
+terraform {
+  required_providers {
+    coder = {
+      source = "coder/coder"
+    }
   }
 }
 
-variable "healthcheck_interval" {
-  description = "Health check interval in seconds"
-  type        = number
-  default     = 5
+resource "coder_app" "ray-dashboard" {
+  agent_id     = var.agent_id
+  slug         = var.slug
+  display_name = var.display_name
+  icon         = var.icon
+  url          = "http://localhost:${var.port}"
+  subdomain    = var.subdomain
+  share        = var.share
+
+  healthcheck {
+    url       = "http://localhost:${var.port}"
+    interval  = var.healthcheck_interval
+    threshold = var.healthcheck_threshold
+  }
 }
 
-variable "healthcheck_threshold" {
-  description = "Health check threshold"
-  type        = number
-  default     = 10
+resource "coder_script" "ray_setup" {
+  count               = var.auto_install_ray ? 1 : 0
+  agent_id            = var.agent_id
+  display_name        = "Ray Setup"
+  icon                = var.icon
+  script              = local.ray_setup_script
+  start_blocks_login  = true
+  run_on_start        = true
 }
 
-variable "auto_install_ray" {
-  description = "Whether to automatically install Ray on agent startup"
-  type        = bool
-  default     = true
+locals {
+  ray_setup_script = <<-EOT
+    #!/bin/bash
+    set -euo pipefail
+    
+    echo "Setting up Ray environment..."
+    
+    # Install system dependencies
+    sudo apt-get update
+    sudo apt-get install -y python3 python3-pip python3-venv build-essential
+    
+    # Create Python virtual environment for Ray
+    python3 -m venv ${var.venv_path}
+    source ${var.venv_path}/bin/activate
+    
+    # Upgrade pip and install Ray
+    pip install --upgrade pip
+    pip install "ray[${join(",", var.ray_extras)}]"
+    
+    # Install additional packages if specified
+    %{if length(var.additional_python_packages) > 0~}
+    pip install ${join(" ", var.additional_python_packages)}
+    %{endif~}
+    
+    # Set up Jupyter kernel if included
+    %{if contains(var.ray_extras, "jupyter")~}
+    pip install ipykernel ipywidgets
+    python -m ipykernel install --user --name ray-env --display-name "Python (Ray)"
+    %{endif~}
+    
+    # Auto-activate environment
+    if [ "${var.auto_activate_venv}" = "true" ]; then
+        echo "source ${var.venv_path}/bin/activate" >> ~/.bashrc
+    fi
+    
+    # Start Ray dashboard if enabled
+    %{if var.auto_start_dashboard~}
+    source ${var.venv_path}/bin/activate
+    ray start --head --dashboard-host=0.0.0.0 --dashboard-port=${var.port} --disable-usage-stats > /tmp/ray-dashboard.log 2>&1 &
+    %{endif~}
+    
+    echo "Ray setup complete!"
+  EOT
 }
-
-variable "auto_start_dashboard" {
-  description = "Whether to automatically start the Ray dashboard"
-  type        = bool
-  default     = true
-}
-
-variable "venv_path" {
-  description = "Path to create the Python virtual environment for Ray"
-  type        = string
-  default     = "/home/coder/.venv-ray"
-}
-
-variable "auto_activate_venv" {
-  description = "Whether to auto-activate the Ray virtual environment in shell profiles"
-  type        = bool
-  default     = true
-}
-
-variable "ray_extras" {
-  description = "Ray installation extras (e.g., 'default', 'jupyter', 'tune', 'rllib')"
-  type        = list(string)
-  default     = ["default", "jupyter"]
-}
-
-variable "additional_python_packages" {
-  description = "Additional Python packages to install in the Ray environment"
-  type        = list(string)
-  default     = []
-}
-
-variable "ray_temp_dir" {
-  description = "Custom temporary directory for Ray (leave empty for default)"
-  type        = string
-  default     = ""
-}
-
