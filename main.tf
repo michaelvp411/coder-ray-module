@@ -1,11 +1,3 @@
-terraform {
-  required_providers {
-    coder = {
-      source = "coder/coder"
-    }
-  }
-}
-
 resource "coder_app" "ray-dashboard" {
   agent_id     = var.agent_id
   slug         = var.slug
